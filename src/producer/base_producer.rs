@@ -122,7 +122,7 @@ unsafe extern "C" fn delivery_cb<C: ProducerContext>(
 ///     .payload("content")                                    // message payload
 ///     .partition(5);                                         // target partition
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct BaseRecord<'a, K: ToBytes + ?Sized = (), P: ToBytes + ?Sized = (), D: IntoOpaque = ()> {
     /// Required destination topic.
     pub topic: &'a str,

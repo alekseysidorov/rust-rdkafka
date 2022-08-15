@@ -33,7 +33,7 @@ use crate::util::{AsyncRuntime, DefaultRuntime, IntoOpaque, Timeout};
 /// Like [`BaseRecord`], but specific to the [`FutureProducer`]. The only
 /// difference is that the [FutureRecord] doesn't provide custom delivery opaque
 /// object.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FutureRecord<'a, K: ToBytes + ?Sized, P: ToBytes + ?Sized> {
     /// Required destination topic.
     pub topic: &'a str,
