@@ -31,7 +31,7 @@ name = "rdkafka_sys"
 path = "src/lib.rs"
 
 [features]
-default = ["libz", "automatic-linking"]
+default = ["libz"]
 
 # Build librdkafka with its CMake build system, rather than its default "mklove"
 # build system. This feature requires that the system has CMake installed.

@@ -108,7 +108,7 @@ fn main() -> anyhow::Result<()> {
         match try_find_kafka(librdkafka_version, KafkaFindMode::Dynamic) {
             Ok(_) => return Ok(()),
             Err(err) if has_automatic_linking => eprintln!(
-                "Dynamic linking failed: {}. Falling back to static linking.",
+                "cargo:warning=Dynamic linking failed: {}. Falling back to static linking.",
                 err
             ),
 
@@ -116,7 +116,7 @@ fn main() -> anyhow::Result<()> {
         }
     }
     // Try to link with the existing static rdkafka.
-    if has_automatic_linking && try_find_kafka(librdkafka_version, KafkaFindMode::Static).is_ok() {
+    if try_find_kafka(librdkafka_version, KafkaFindMode::Static).is_ok() {
         return Ok(());
     }
     // Otherwise build rdkafka.
