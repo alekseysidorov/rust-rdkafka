@@ -73,7 +73,7 @@ fn try_find_kafka(librdkafka_version: &str, mode: KafkaFindMode) -> Result<(), S
         .cargo_metadata(true)
         .atleast_version(librdkafka_version)
         .statik(mode.is_static())
-        .probe("rdkafka");
+        .probe(mode.kafka_pkg_name());
 
     match pkg_probe {
         Ok(library) => {
@@ -116,16 +116,19 @@ fn main() -> anyhow::Result<()> {
         }
     }
     // Try to link with the existing static rdkafka.
-    if try_find_kafka(librdkafka_version, KafkaFindMode::Static).is_ok() {
-        return Ok(());
+    if let Err(err) = try_find_kafka(librdkafka_version, KafkaFindMode::Static) {
+        eprintln!("cargo:warning=Static linking failed: {}.", err);
+        // Otherwise build rdkafka.
+        if !Path::new("librdkafka/LICENSE").exists() {
+            eprintln!("Setting up submodules");
+            run_command_or_fail("../", "git", &["submodule", "update", "--init"])?;
+        }
+
+        eprintln!("Building and linking librdkafka statically");
+        build_librdkafka()
+    } else {
+        Ok(())
     }
-    // Otherwise build rdkafka.
-    if !Path::new("librdkafka/LICENSE").exists() {
-        eprintln!("Setting up submodules");
-        run_command_or_fail("../", "git", &["submodule", "update", "--init"])?;
-    }
-    eprintln!("Building and linking librdkafka statically");
-    build_librdkafka()
 }
 
 #[cfg(not(feature = "cmake-build"))]
