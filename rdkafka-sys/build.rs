@@ -1,8 +1,33 @@
 use std::borrow::Borrow;
 use std::env;
 use std::ffi::OsStr;
+use std::fmt::Display;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+#[derive(Debug)]
+enum KafkaFindMode {
+    Dynamic,
+    Static,
+}
+
+impl KafkaFindMode {
+    fn kafka_pkg_name(&self) -> &str {
+        match self {
+            KafkaFindMode::Dynamic => "rdkafka",
+            KafkaFindMode::Static => "rdkafka-static",
+        }
+    }
+}
+
+impl Display for KafkaFindMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            KafkaFindMode::Dynamic => f.write_str("dynamically"),
+            KafkaFindMode::Static => f.write_str("statically"),
+        }
+    }
+}
 
 fn run_command_or_fail<P, S>(dir: &str, cmd: P, args: &[S]) -> anyhow::Result<()>
 where
@@ -37,22 +62,13 @@ where
     }
 }
 
-fn try_dynamic_linking() -> Result<(), String> {
-    eprintln!("librdkafka will be linked dynamically");
-
-    let librdkafka_version = match env!("CARGO_PKG_VERSION")
-        .split('+')
-        .collect::<Vec<_>>()
-        .as_slice()
-    {
-        [_rdsys_version, librdkafka_version] => *librdkafka_version,
-        _ => panic!("Version format is not valid"),
-    };
+fn try_find_kafka(librdkafka_version: &str, mode: KafkaFindMode) -> Result<(), String> {
+    eprintln!("librdkafka will be linked {}", mode);
 
     let pkg_probe = pkg_config::Config::new()
         .cargo_metadata(true)
         .atleast_version(librdkafka_version)
-        .probe("rdkafka");
+        .probe(mode.kafka_pkg_name());
 
     match pkg_probe {
         Ok(library) => {
@@ -70,11 +86,21 @@ fn try_dynamic_linking() -> Result<(), String> {
 }
 
 fn main() -> anyhow::Result<()> {
+    let librdkafka_version = match env!("CARGO_PKG_VERSION")
+        .split('+')
+        .collect::<Vec<_>>()
+        .as_slice()
+    {
+        [_rdsys_version, librdkafka_version] => *librdkafka_version,
+        _ => anyhow::bail!("Version format is not valid"),
+    };
+
     let has_automatic_linking = env::var("CARGO_FEATURE_AUTOMATIC_LINKING").is_ok();
     let has_dynamic_linking = env::var("CARGO_FEATURE_DYNAMIC_LINKING").is_ok();
 
+    // Try to link with the existing dynamic rdkafka.
     if has_automatic_linking || has_dynamic_linking {
-        match try_dynamic_linking() {
+        match try_find_kafka(librdkafka_version, KafkaFindMode::Dynamic) {
             Ok(_) => return Ok(()),
             Err(err) if has_automatic_linking => eprintln!(
                 "Dynamic linking failed: {}. Falling back to static linking.",
@@ -84,7 +110,11 @@ fn main() -> anyhow::Result<()> {
             Err(err) => return Err(anyhow::anyhow!("Dynamic linking failed: {}. Exiting.", err)),
         }
     }
-
+    // Try to link with the existing static rdkafka.
+    if has_automatic_linking && try_find_kafka(librdkafka_version, KafkaFindMode::Static).is_ok() {
+        return Ok(());
+    }
+    // Otherwise build rdkafka.
     if !Path::new("librdkafka/LICENSE").exists() {
         eprintln!("Setting up submodules");
         run_command_or_fail("../", "git", &["submodule", "update", "--init"])?;
