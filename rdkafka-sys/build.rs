@@ -73,7 +73,7 @@ fn try_find_kafka(librdkafka_version: &str, mode: KafkaFindMode) -> Result<(), S
         .cargo_metadata(true)
         .atleast_version(librdkafka_version)
         .statik(mode.is_static())
-        .probe(mode.kafka_pkg_name());
+        .probe("rdkafka");
 
     match pkg_probe {
         Ok(library) => {
