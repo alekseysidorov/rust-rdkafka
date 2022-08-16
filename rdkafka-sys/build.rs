@@ -18,6 +18,10 @@ impl KafkaFindMode {
             KafkaFindMode::Static => "rdkafka-static",
         }
     }
+
+    fn is_static(&self) -> bool {
+        matches!(self, Self::Static)
+    }
 }
 
 impl Display for KafkaFindMode {
@@ -68,6 +72,7 @@ fn try_find_kafka(librdkafka_version: &str, mode: KafkaFindMode) -> Result<(), S
     let pkg_probe = pkg_config::Config::new()
         .cargo_metadata(true)
         .atleast_version(librdkafka_version)
+        .statik(mode.is_static())
         .probe(mode.kafka_pkg_name());
 
     match pkg_probe {
