@@ -133,7 +133,7 @@ fn main() -> anyhow::Result<()> {
         }
     }
     // Try to link with the existing static rdkafka without pkg config.
-    if !try_to_find_and_link_static_lib("rdkafka") {
+    if !try_to_find_and_link_static_lib("RDKAFKA") {
         eprintln!("cargo:warning=Static linking failed, please set `RDKAFKA_LIB_DIR` environment variable");
         // Otherwise build rdkafka.
         if !Path::new("librdkafka/LICENSE").exists() {
