@@ -90,6 +90,23 @@ fn try_find_kafka(librdkafka_version: &str, mode: KafkaFindMode) -> Result<(), S
     }
 }
 
+fn try_to_find_and_link_static_lib(lib_name: &str) -> bool {
+    if let Ok(v) = env::var(&format!("{}_COMPILE", lib_name)) {
+        if v.to_lowercase() == "true" || v == "1" {
+            return false;
+        }
+    }
+
+    if let Ok(lib_dir) = env::var(&format!("{}_LIB_DIR", lib_name)) {
+        let mode = "static";
+
+        println!("cargo:rustc-link-search=native={}", lib_dir);
+        println!("cargo:rustc-link-lib={}={}", mode, lib_name.to_lowercase());
+        return true;
+    }
+    false
+}
+
 fn main() -> anyhow::Result<()> {
     let librdkafka_version = match env!("CARGO_PKG_VERSION")
         .split('+')
@@ -115,9 +132,9 @@ fn main() -> anyhow::Result<()> {
             Err(err) => return Err(anyhow::anyhow!("Dynamic linking failed: {}. Exiting.", err)),
         }
     }
-    // Try to link with the existing static rdkafka.
-    if let Err(err) = try_find_kafka(librdkafka_version, KafkaFindMode::Static) {
-        eprintln!("cargo:warning=Static linking failed: {}.", err);
+    // Try to link with the existing static rdkafka without pkg config.
+    if !try_to_find_and_link_static_lib("rdkafka") {
+        eprintln!("cargo:warning=Static linking failed, please set `RDKAFKA_LIB_DIR` environment variable");
         // Otherwise build rdkafka.
         if !Path::new("librdkafka/LICENSE").exists() {
             eprintln!("Setting up submodules");
