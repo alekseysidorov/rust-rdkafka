@@ -2,9 +2,9 @@ use std::borrow::Borrow;
 use std::env;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
-use std::process::{self, Command};
+use std::process::Command;
 
-fn run_command_or_fail<P, S>(dir: &str, cmd: P, args: &[S])
+fn run_command_or_fail<P, S>(dir: &str, cmd: P, args: &[S]) -> anyhow::Result<()>
 where
     P: AsRef<Path>,
     S: Borrow<str> + AsRef<OsStr>,
@@ -18,7 +18,7 @@ where
         PathBuf::from(dir)
             .join(cmd)
             .canonicalize()
-            .expect("canonicalization failed")
+            .map_err(|err| anyhow::anyhow!("canonicalization failed: {}", err))?
     } else {
         PathBuf::from(cmd)
     };
@@ -30,59 +30,71 @@ where
     );
     let ret = Command::new(cmd).current_dir(dir).args(args).status();
     match ret.map(|status| (status.success(), status.code())) {
-        Ok((true, _)) => (),
-        Ok((false, Some(c))) => panic!("Command failed with error code {}", c),
-        Ok((false, None)) => panic!("Command got killed"),
-        Err(e) => panic!("Command failed with error: {}", e),
+        Ok((true, _)) => Ok(()),
+        Ok((false, Some(c))) => Err(anyhow::anyhow!("Command failed with error code {}", c)),
+        Ok((false, None)) => Err(anyhow::anyhow!("Command got killed")),
+        Err(e) => Err(anyhow::anyhow!("Command failed with error: {}", e)),
     }
 }
 
-fn main() {
-    if env::var("CARGO_FEATURE_DYNAMIC_LINKING").is_ok() {
-        eprintln!("librdkafka will be linked dynamically");
+fn try_dynamic_linking() -> Result<(), String> {
+    eprintln!("librdkafka will be linked dynamically");
 
-        let librdkafka_version = match env!("CARGO_PKG_VERSION")
-            .split('+')
-            .collect::<Vec<_>>()
-            .as_slice()
-        {
-            [_rdsys_version, librdkafka_version] => *librdkafka_version,
-            _ => panic!("Version format is not valid"),
-        };
+    let librdkafka_version = match env!("CARGO_PKG_VERSION")
+        .split('+')
+        .collect::<Vec<_>>()
+        .as_slice()
+    {
+        [_rdsys_version, librdkafka_version] => *librdkafka_version,
+        _ => panic!("Version format is not valid"),
+    };
 
-        let pkg_probe = pkg_config::Config::new()
-            .cargo_metadata(true)
-            .atleast_version(librdkafka_version)
-            .probe("rdkafka");
+    let pkg_probe = pkg_config::Config::new()
+        .cargo_metadata(true)
+        .atleast_version(librdkafka_version)
+        .probe("rdkafka");
 
-        match pkg_probe {
-            Ok(library) => {
-                eprintln!("librdkafka found on the system:");
-                eprintln!("  Name: {:?}", library.libs);
-                eprintln!("  Path: {:?}", library.link_paths);
-                eprintln!("  Version: {}", library.version);
-            }
-            Err(err) => {
-                eprintln!(
-                    "librdkafka {} cannot be found on the system: {}",
-                    librdkafka_version, err
-                );
-                eprintln!("Dynamic linking failed. Exiting.");
-                process::exit(1);
-            }
+    match pkg_probe {
+        Ok(library) => {
+            eprintln!("librdkafka found on the system:");
+            eprintln!("  Name: {:?}", library.libs);
+            eprintln!("  Path: {:?}", library.link_paths);
+            eprintln!("  Version: {}", library.version);
+            Ok(())
         }
-    } else {
-        if !Path::new("librdkafka/LICENSE").exists() {
-            eprintln!("Setting up submodules");
-            run_command_or_fail("../", "git", &["submodule", "update", "--init"]);
-        }
-        eprintln!("Building and linking librdkafka statically");
-        build_librdkafka();
+        Err(err) => Err(format!(
+            "librdkafka {} cannot be found on the system: {}",
+            librdkafka_version, err
+        )),
     }
+}
+
+fn main() -> anyhow::Result<()> {
+    let has_automatic_linking = env::var("CARGO_FEATURE_AUTOMATIC_LINKING").is_ok();
+    let has_dynamic_linking = env::var("CARGO_FEATURE_DYNAMIC_LINKING").is_ok();
+
+    if has_automatic_linking || has_dynamic_linking {
+        match try_dynamic_linking() {
+            Ok(_) => return Ok(()),
+            Err(err) if has_automatic_linking => eprintln!(
+                "Dynamic linking failed: {}. Falling back to static linking.",
+                err
+            ),
+
+            Err(err) => return Err(anyhow::anyhow!("Dynamic linking failed: {}. Exiting.", err)),
+        }
+    }
+
+    if !Path::new("librdkafka/LICENSE").exists() {
+        eprintln!("Setting up submodules");
+        run_command_or_fail("../", "git", &["submodule", "update", "--init"])?;
+    }
+    eprintln!("Building and linking librdkafka statically");
+    build_librdkafka()
 }
 
 #[cfg(not(feature = "cmake-build"))]
-fn build_librdkafka() {
+fn build_librdkafka() -> anyhow::Result<()> {
     let mut configure_flags: Vec<String> = Vec::new();
 
     let mut cflags = Vec::new();
@@ -168,11 +180,11 @@ fn build_librdkafka() {
         //
         // https://github.com/edenhill/mklove/issues/17
         println!("Cloning librdkafka");
-        run_command_or_fail(".", "cp", &["-a", "librdkafka/.", &out_dir]);
+        run_command_or_fail(".", "cp", &["-a", "librdkafka/.", &out_dir])?;
     }
 
     println!("Configuring librdkafka");
-    run_command_or_fail(&out_dir, "./configure", configure_flags.as_slice());
+    run_command_or_fail(&out_dir, "./configure", configure_flags.as_slice())?;
 
     println!("Compiling librdkafka");
     if let Some(makeflags) = env::var_os("CARGO_MAKEFLAGS") {
@@ -186,15 +198,17 @@ fn build_librdkafka() {
             "make"
         },
         &["libs"],
-    );
+    )?;
 
     println!("cargo:rustc-link-search=native={}/src", out_dir);
     println!("cargo:rustc-link-lib=static=rdkafka");
     println!("cargo:root={}", out_dir);
+
+    Ok(())
 }
 
 #[cfg(feature = "cmake-build")]
-fn build_librdkafka() {
+fn build_librdkafka() -> anyhow::Result<()> {
     let mut config = cmake::Config::new("librdkafka");
     let mut cmake_library_paths = vec![];
 
@@ -281,4 +295,6 @@ fn build_librdkafka() {
 
     println!("cargo:rustc-link-search=native={}/lib", dst.display());
     println!("cargo:rustc-link-lib=static=rdkafka");
+
+    Ok(())
 }
